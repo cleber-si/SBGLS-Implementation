@@ -33,7 +33,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
-def select_N_time_series_points(x, y, dy, N, mode='chronological'):
+def select_N_time_series_points(x, y, dy, N, mode='chronological', idxs_mask=None):
     x = np.array(x)
     y = np.array(y)
     dy = np.array(dy)
@@ -45,43 +45,74 @@ def select_N_time_series_points(x, y, dy, N, mode='chronological'):
     
     elif mode == 'random':
         idxs = np.arange(len(x))
-        idxs_mask = np.random.choice(idxs, N, replace=False)
+
+        if type(idxs_mask) != type(None):
+            mask_len = len(idxs_mask)
+            N -= mask_len
+            idxs = idxs[~np.isin(idxs, idxs_mask)]
+            idxs_mask_new = np.random.choice(idxs, N, replace=False)
+            idxs_mask = np.concatenate([idxs_mask, idxs_mask_new])
+        else:
+            idxs_mask = np.random.choice(idxs, N, replace=False)
+
         idxs_mask.sort()
 
         x_cut = x[idxs_mask]
         y_cut = y[idxs_mask]
         dy_cut = dy[idxs_mask]
 
-    return x_cut, y_cut, dy_cut
+    return x_cut, y_cut, dy_cut, idxs_mask
+
 
 
 def plot_curve_and_periodogram(x, y, dy, num_points, periodogram_type='GLS',
-                               spectrum_yscale='linear', mode='chronological'):
+                               spectrum_yscale='linear', mode='chronological',
+                               old_idxs_mask=None):
     algorithm = {
         'GLS' : GLS,
         'BGLS' : BGLS
     }
 
-    t_cut, y_cut, dy_cut = select_N_time_series_points(x, y, dy, N=num_points, mode=mode)
+    t_cut, y_cut, dy_cut, idxs_masks = select_N_time_series_points(x, y, dy,
+                                                                   N=num_points, mode=mode,
+                                                                   idxs_mask=old_idxs_mask)
     result = algorithm[periodogram_type](t_cut, y_cut, dy_cut, fmax=1)
 
     periods = 1/result['freq']
-    post_dist = result['power'] - min(result['power'])
+    power = result['power'] - min(result['power'])
     best_P = result['best_period']
+
+    output = {
+        't_cut' : t_cut,
+        'y_cut' : y_cut,
+        'dy_cut' : dy_cut,
+        'idxs_masks' : idxs_masks,
+        'periods' : periods,
+        'power' : power,
+        'best_P' : best_P
+    }
 
     # Plot
     fontsize = 13
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), constrained_layout=True)
 
     ## Time series
-    axes[0].errorbar(t_cut, y_cut, dy_cut, fmt='o', color='k', alpha=0.6)
+    if type(old_idxs_mask) != type(None):
+        new_idxs_mask = idxs_masks[~np.isin(idxs_masks, old_idxs_mask)]
+        axes[0].errorbar(x[old_idxs_mask], y[old_idxs_mask], dy[old_idxs_mask],
+                         fmt='o', color='k', alpha=0.6)
+        axes[0].errorbar(x[new_idxs_mask], y[new_idxs_mask], dy[new_idxs_mask],
+                         fmt='o', color='red', alpha=0.6, label='New points')
+        axes[0].legend(loc='lower left')
+    else:
+        axes[0].errorbar(t_cut, y_cut, dy_cut, fmt='o', color='k', alpha=0.6)
     axes[0].set_xlabel("Time [eMJD]", fontsize = fontsize)
     axes[0].set_ylabel("RV [m/s]", fontsize = fontsize)
     axes[0].set_title(f"Time Series: First {num_points} Data Points", fontsize = fontsize+5)
     axes[0].tick_params(axis='both', labelsize=12)
 
     ## Periodogram power over period by
-    axes[1].plot(periods, post_dist, color='grey')
+    axes[1].plot(periods, power, color='grey')
     axes[1].axvline(best_P, ls='--', color='k', alpha=0.7, label=f'Best period: {best_P:.2f} days')
     axes[1].set_xlabel("Period [days]", fontsize = fontsize)
     axes[1].set_ylabel("Signal Power", fontsize = fontsize)
@@ -92,6 +123,8 @@ def plot_curve_and_periodogram(x, y, dy, num_points, periodogram_type='GLS',
     axes[1].legend(fontsize = fontsize)
 
     plt.show()
+
+    return output
 
 
 def get_frequency_grid(fmin = 0.03, fmax = 2.0, num_freqs = 5000):
@@ -190,13 +223,13 @@ def BGLS(time, y, dy, fmin = 0.03, fmax = 2.0, num_freqs = 5000):
 
 def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
                         p_min = 0.5, p_max = 50, num_periods = 5000,
-                        mode='chronological'):
+                        mode='chronological', idxs_masks=None):
     fmin = 1/p_max
     fmax = 1/p_min
 
     algorithm = {
         'GLS' : GLS,
-        'BGLS' : BGLS      # Slow! Pardon my implementation...
+        'BGLS' : BGLS
     }
     
     N_max = len(t)
@@ -207,9 +240,15 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
 
     for i in tqdm(range(N_max-N_min)):
         current_N = N_min+i
-        t_cut, y_cut, dy_cut = select_N_time_series_points(t, y, dy, N=current_N, mode=mode)
+        if mode == 'random with no replacement':
+            mode = mode.split(' ')[0]
+            idxs_masks = None
+        t_cut, y_cut, dy_cut, idxs_masks = select_N_time_series_points(t, y, dy,
+                                                                       N=current_N, mode=mode,
+                                                                       idxs_mask=idxs_masks)
         bgls_result = algorithm[periodogram_type](t_cut, y_cut, dy_cut,
-                                                  fmin = fmin, fmax = fmax, num_freqs = num_periods)
+                                                  fmin = fmin, fmax = fmax,
+                                                  num_freqs = num_periods)
 
         N_array.append(np.zeros(len(bgls_result['freq'])) + current_N)
         periods_array.append(1/bgls_result['freq'])
