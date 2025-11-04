@@ -33,22 +33,36 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
-def select_N_time_series_points(x, y, dy, N):
-    x_cut = x[:N]
-    y_cut = y[:N]
-    dy_cut = dy[:N]
+def select_N_time_series_points(x, y, dy, N, mode='chronological'):
+    x = np.array(x)
+    y = np.array(y)
+    dy = np.array(dy)
+
+    if mode == 'chronological':
+        x_cut = x[:N]
+        y_cut = y[:N]
+        dy_cut = dy[:N]
+    
+    elif mode == 'random':
+        idxs = np.arange(len(x))
+        idxs_mask = np.random.choice(idxs, N, replace=False)
+        idxs_mask.sort()
+
+        x_cut = x[idxs_mask]
+        y_cut = y[idxs_mask]
+        dy_cut = dy[idxs_mask]
 
     return x_cut, y_cut, dy_cut
 
 
 def plot_curve_and_periodogram(x, y, dy, num_points, periodogram_type='GLS',
-                               spectrum_yscale='linear', ):
+                               spectrum_yscale='linear', mode='chronological'):
     algorithm = {
         'GLS' : GLS,
         'BGLS' : BGLS
     }
 
-    t_cut, y_cut, dy_cut = select_N_time_series_points(x, y, dy, N=num_points)
+    t_cut, y_cut, dy_cut = select_N_time_series_points(x, y, dy, N=num_points, mode=mode)
     result = algorithm[periodogram_type](t_cut, y_cut, dy_cut, fmax=1)
 
     periods = 1/result['freq']
@@ -175,7 +189,8 @@ def BGLS(time, y, dy, fmin = 0.03, fmax = 2.0, num_freqs = 5000):
 
 
 def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
-                        p_min = 0.5, p_max = 50, num_periods = 5000):
+                        p_min = 0.5, p_max = 50, num_periods = 5000,
+                        mode='chronological'):
     fmin = 1/p_max
     fmax = 1/p_min
 
@@ -192,7 +207,7 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
 
     for i in tqdm(range(N_max-N_min)):
         current_N = N_min+i
-        t_cut, y_cut, dy_cut = select_N_time_series_points(t, y, dy, N=current_N)
+        t_cut, y_cut, dy_cut = select_N_time_series_points(t, y, dy, N=current_N, mode=mode)
         bgls_result = algorithm[periodogram_type](t_cut, y_cut, dy_cut,
                                                   fmin = fmin, fmax = fmax, num_freqs = num_periods)
 
@@ -232,7 +247,14 @@ def plot_stacked_periodogram_heatmap(data, cmap="Reds", vmin=None, vmax=None, no
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    im = ax.pcolormesh(P, N, Z, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax, norm=norm)
+    if norm == 'linear':
+        pass
+    elif norm == 'log':
+        Z = np.log10(Z)
+    else:
+        raise Exception('Invalid normalization method.')
+
+    im = ax.pcolormesh(P, N, Z, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
 
     cbar = fig.colorbar(im, ax=ax, pad=0.01)
     cbar.set_label("Power Spectrum Intensity", fontsize=fontsize)
