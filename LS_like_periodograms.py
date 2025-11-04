@@ -268,7 +268,7 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
 
     for i in tqdm(range(N_max-N_min)):
         current_N = N_min+i
-        if mode == 'random with no replacement':
+        if mode == 'random without replacement':
             mode = mode.split(' ')[0]
             idxs_masks = None
         t_cut, y_cut, dy_cut, idxs_masks = select_N_time_series_points(t, y, dy,
