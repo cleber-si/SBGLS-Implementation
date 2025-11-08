@@ -245,8 +245,6 @@ def BGLS(time, y, dy, fmin = 0.03, fmax = 2.0, num_freqs = 5000):
     return result
 
 
-
-
 def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
                         p_min = 0.5, p_max = 50, num_periods = 5000,
                         mode='chronological', idxs_masks=None,
@@ -265,6 +263,7 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
     periods_array = []
     power_array = []
     SNR_array = []
+    best_P_array = []
 
     for i in tqdm(range(N_max-N_min)):
         current_N = N_min+i
@@ -284,6 +283,7 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
         power = bgls_result['power'] - min(bgls_result['power']) + 1
         power_array.append(power)
         best_P = bgls_result['best_period']
+        best_P_array.append(best_P)
 
         output = {
             'periods' : periods,
@@ -298,7 +298,7 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
 
     results = {
         'SNR' : {
-            'best_P' : best_P,
+            'best_P_array' : best_P_array,
             'SNR_array' : SNR_array,
             'delta_P' : delta_P
         },
@@ -320,7 +320,8 @@ def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None,
     """
     data = results['data']
     SNR_array = results['SNR']['SNR_array']
-    best_P = results['SNR']['best_P']
+    best_P_array = np.array(results['SNR']['best_P_array'])
+    best_P = np.mean(best_P_array)
     delta_P = results['SNR']['delta_P']
 
     N, P, Z = data[0], data[1], data[2]
@@ -360,15 +361,14 @@ def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None,
     ax.tick_params(axis='both', labelsize=12)
 
     if highlight_strong_signal:
-        ax.vlines([best_P-delta_P, best_P+delta_P], min(N_1D_array), max(N_1D_array),
-                  ls='--')
+        ax.plot(best_P_array, N_1D_array, color='k')
+        ax.plot(best_P_array-delta_P, N_1D_array, color='C0', ls='--')
+        ax.plot(best_P_array+delta_P, N_1D_array, color='C0', ls='--')
 
     plt.tight_layout()
     plt.show()
 
     if plot_SNR:
-        N_1D_array = N[:,0]
-
         plt.figure(figsize=(10, 5))
         plt.plot(N_1D_array, SNR_array)
         plt.xlabel("N of Observations", fontsize=fontsize)
