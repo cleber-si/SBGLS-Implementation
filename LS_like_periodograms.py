@@ -39,9 +39,57 @@ def median_average_deviation(data, axis=None):
     return np.median(np.abs(data - med), axis=axis)
 
 
+def uncompress_data(data):
+    N, P, Z = data[0], data[1], data[2]
+
+    N = np.asarray(N)
+    P = np.asarray(P)
+    Z = np.asarray(Z)
+
+    N_1D_array = N[:,0]
+
+    # Sort columns by period and rows by N, just in case
+    col_order = np.argsort(P[0])
+    row_order = np.argsort(N[:, 0])
+
+    P = P[row_order][:, col_order]
+    N = N[row_order][:, col_order]
+    Z = Z[row_order][:, col_order]
+
+    return N, P, Z, N_1D_array
+
+
+def get_P_range(delta_P):
+    """
+    Note that delta_P must be a float or an array.
+    
+    In the case of being a float, the calculation will consider
+    left_P == right_P == delta_P, i.e. a symmetrical period window around the
+    considered period to calculate the SNR.
+    
+    In the case of being an array, it must have length=2 and has to follow the
+    (left_P, right_P) format. Also note that left_P and right_P are the respective
+    distances to the left and right from the base period value being considered for
+    the calculation of the SNR.
+    """
+
+    if (type(delta_P) == float) or (type(delta_P) == int):
+        left_P = delta_P
+        right_P = delta_P
+    elif (type(delta_P) == tuple) or (type(delta_P) == list):
+        if len(delta_P) == 2:
+            left_P, right_P = delta_P
+        else:
+            raise Exception('Invalid array for delta_P.')
+    
+    return left_P, right_P
+
+
 def calculate_SNR(output, delta_P):
-    lower_period = output['best_P'] - delta_P
-    higher_period = output['best_P'] + delta_P
+    left_P, right_P = get_P_range(delta_P)
+
+    lower_period = output['considered_P'] - left_P
+    higher_period = output['considered_P'] + right_P
 
     periods = output['periods']
     power = output['power']
@@ -56,6 +104,33 @@ def calculate_SNR(output, delta_P):
     n = median_average_deviation(noise_power) * 1.48
 
     return s/n
+
+
+def get_SNR(results, delta_P, base_P):
+    data = results['data']
+    best_P_array = results['best_P_array']
+
+    _, P, Z, N_1D_array = uncompress_data(data)
+
+    SNR_array = []
+
+    for i, _ in enumerate(N_1D_array):
+        periods = P[i]
+        power   = Z[i]
+        best_P  = best_P_array[i]
+
+        considered_P = base_P if base_P != None else best_P
+
+        output = {
+                'periods' : periods,
+                'power' : power,
+                'considered_P' : considered_P
+            }
+
+        SNR = calculate_SNR(output, delta_P)
+        SNR_array.append(SNR)
+    
+    return N_1D_array, SNR_array
 
 
 def select_N_time_series_points(x, y, dy, N, mode='chronological', idxs_mask=None):
@@ -247,8 +322,7 @@ def BGLS(time, y, dy, fmin = 0.03, fmax = 2.0, num_freqs = 5000):
 
 def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
                         p_min = 0.5, p_max = 50, num_periods = 5000,
-                        mode='chronological', idxs_masks=None,
-                        delta_P = 0.08):
+                        mode='chronological', idxs_masks=None):
     fmin = 1/p_max
     fmax = 1/p_min
 
@@ -262,7 +336,6 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
     N_array = []
     periods_array = []
     power_array = []
-    SNR_array = []
     best_P_array = []
 
     for i in tqdm(range(N_max-N_min)):
@@ -285,31 +358,31 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
         best_P = bgls_result['best_period']
         best_P_array.append(best_P)
 
-        output = {
-            'periods' : periods,
-            'power' : power,
-            'best_P' : best_P
-        }
-
-        SNR = calculate_SNR(output, delta_P)
-        SNR_array.append(SNR)
-
     data = np.stack([N_array, periods_array, power_array], axis=0)
 
     results = {
-        'SNR' : {
-            'best_P_array' : best_P_array,
-            'SNR_array' : SNR_array,
-            'delta_P' : delta_P
-        },
+        'best_P_array' : best_P_array,
         'data' : data
     }
 
     return results
 
 
+def ploting_SNR(results, delta_P=0.08, base_P=None):
+    N_1D_array, SNR_array = get_SNR(results, delta_P=delta_P, base_P=base_P)
+
+    fontsize = 13
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(N_1D_array, SNR_array)
+    plt.xlabel("N of Observations", fontsize=fontsize)
+    plt.ylabel("SNR", fontsize=fontsize)
+    plt.tick_params(axis='both', labelsize=12)
+    plt.show()
+
+
 def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None, norm='linear',
-                                     highlight_strong_signal = False, plot_SNR=False):
+                                     plot_SNR=False, delta_P=0.08, base_P=None):
     """
     Plot heatmap from `data` = np.stack([N_array, periods_array, power_array], axis=0)
     where each entry is a list/array per N having the same number of frequencies.
@@ -319,26 +392,9 @@ def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None,
     z-axis: power (color)
     """
     data = results['data']
-    SNR_array = results['SNR']['SNR_array']
-    best_P_array = np.array(results['SNR']['best_P_array'])
-    best_P = np.mean(best_P_array)
-    delta_P = results['SNR']['delta_P']
+    best_P_array = np.array(results['best_P_array'])
 
-    N, P, Z = data[0], data[1], data[2]
-
-    N = np.asarray(N)
-    P = np.asarray(P)
-    Z = np.asarray(Z)
-
-    N_1D_array = N[:,0]
-
-    # Sort columns by period and rows by N, just in case
-    col_order = np.argsort(P[0])
-    row_order = np.argsort(N[:, 0])
-
-    P = P[row_order][:, col_order]
-    N = N[row_order][:, col_order]
-    Z = Z[row_order][:, col_order]
+    N, P, Z, N_1D_array = uncompress_data(data)
 
     fontsize = 13
 
@@ -360,18 +416,24 @@ def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None,
     ax.set_ylabel("N of Observations", fontsize=fontsize)
     ax.tick_params(axis='both', labelsize=12)
 
-    if highlight_strong_signal:
-        ax.plot(best_P_array, N_1D_array, color='k')
-        ax.plot(best_P_array-delta_P, N_1D_array, color='C0', ls='--')
-        ax.plot(best_P_array+delta_P, N_1D_array, color='C0', ls='--')
-
-    plt.tight_layout()
-    plt.show()
-
     if plot_SNR:
-        plt.figure(figsize=(10, 5))
-        plt.plot(N_1D_array, SNR_array)
-        plt.xlabel("N of Observations", fontsize=fontsize)
-        plt.ylabel("SNR", fontsize=fontsize)
-        plt.tick_params(axis='both', labelsize=12)
+        if base_P==None:
+            ax.plot(best_P_array, N_1D_array, color='k')
+            ax.plot(best_P_array-delta_P, N_1D_array, color='C0', ls='--')
+            ax.plot(best_P_array+delta_P, N_1D_array, color='C0', ls='--')
+        else:
+            left_P, right_P = get_P_range(delta_P)
+            ax.vlines([base_P], min(N_1D_array), max(N_1D_array), color='k')
+            ax.vlines([base_P-left_P, base_P+right_P], min(N_1D_array), max(N_1D_array),
+                  ls='--')
+        
+        plt.tight_layout()
         plt.show()
+
+        ploting_SNR(results, delta_P=delta_P, base_P=base_P)
+    
+    else:
+        plt.tight_layout()
+        plt.show()
+
+
