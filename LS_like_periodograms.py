@@ -417,15 +417,18 @@ def plot_stacked_periodogram_heatmap(results, cmap="Reds", vmin=None, vmax=None,
     ax.tick_params(axis='both', labelsize=12)
 
     if plot_SNR:
+        left_P, right_P = get_P_range(delta_P)
         if base_P==None:
             ax.plot(best_P_array, N_1D_array, color='k')
-            ax.plot(best_P_array-delta_P, N_1D_array, color='C0', ls='--')
-            ax.plot(best_P_array+delta_P, N_1D_array, color='C0', ls='--')
-        else:
-            left_P, right_P = get_P_range(delta_P)
+            ax.plot(best_P_array-left_P, N_1D_array, color='C0', ls='--')
+            ax.plot(best_P_array+right_P, N_1D_array, color='C0', ls='--')
+        elif base_P=='optimal':
+            base_P = np.median(best_P_array)
             ax.vlines([base_P], min(N_1D_array), max(N_1D_array), color='k')
-            ax.vlines([base_P-left_P, base_P+right_P], min(N_1D_array), max(N_1D_array),
-                  ls='--')
+            ax.vlines([base_P-left_P, base_P+right_P], min(N_1D_array), max(N_1D_array),ls='--')
+        else:
+            ax.vlines([base_P], min(N_1D_array), max(N_1D_array), color='k')
+            ax.vlines([base_P-left_P, base_P+right_P], min(N_1D_array), max(N_1D_array), ls='--')
         
         plt.tight_layout()
         plt.show()
