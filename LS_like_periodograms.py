@@ -322,7 +322,8 @@ def BGLS(time, y, dy, fmin = 0.03, fmax = 2.0, num_freqs = 5000):
 
 def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
                         p_min = 0.5, p_max = 50, num_periods = 5000,
-                        mode='chronological', idxs_masks=None):
+                        mode='chronological', idxs_masks=None,
+                        iterations = None, first_mode_chronological=False):
     fmin = 1/p_max
     fmax = 1/p_min
 
@@ -333,30 +334,56 @@ def stacked_periodogram(t, y, dy, N_min, periodogram_type='GLS',
     
     N_max = len(t)
 
-    N_array = []
-    periods_array = []
-    power_array = []
-    best_P_array = []
+    def single_stack(mode=mode, idxs_masks=idxs_masks, single_tqdm_condition=False):
+        N_array = []
+        periods_array = []
+        power_array = []
+        best_P_array = []
 
-    for i in tqdm(range(N_max-N_min)):
-        current_N = N_min+i
-        if mode == 'random without replacement':
-            mode = mode.split(' ')[0]
-            idxs_masks = None
-        t_cut, y_cut, dy_cut, idxs_masks = select_N_time_series_points(t, y, dy,
-                                                                       N=current_N, mode=mode,
-                                                                       idxs_mask=idxs_masks)
-        bgls_result = algorithm[periodogram_type](t_cut, y_cut, dy_cut,
-                                                  fmin = fmin, fmax = fmax,
-                                                  num_freqs = num_periods)
+        for i in tqdm(range(N_max-N_min), disable=single_tqdm_condition):
+            current_N = N_min+i
+            if mode == 'random without replacement':
+                mode = mode.split(' ')[0]
+                idxs_masks = None
+            t_cut, y_cut, dy_cut, idxs_masks = select_N_time_series_points(t, y, dy,
+                                                                        N=current_N, mode=mode,
+                                                                        idxs_mask=idxs_masks)
+            bgls_result = algorithm[periodogram_type](t_cut, y_cut, dy_cut,
+                                                    fmin = fmin, fmax = fmax,
+                                                    num_freqs = num_periods)
 
-        N_array.append(np.zeros(len(bgls_result['freq'])) + current_N)
-        periods = 1/bgls_result['freq']
-        periods_array.append(periods)
-        power = bgls_result['power'] - min(bgls_result['power']) + 1
-        power_array.append(power)
-        best_P = bgls_result['best_period']
-        best_P_array.append(best_P)
+            N_array.append(np.zeros(len(bgls_result['freq'])) + current_N)
+            periods = 1/bgls_result['freq']
+            periods_array.append(periods)
+            power = bgls_result['power'] - min(bgls_result['power']) + 1
+            power_array.append(power)
+            best_P = bgls_result['best_period']
+            best_P_array.append(best_P)
+
+        return N_array, periods_array, power_array, best_P_array
+
+    def mean_of_stacks(iterations: int):
+        power_mean = 0
+
+        for iteration in tqdm(range(iterations)):
+            if first_mode_chronological and iteration == 0:
+                current_mode = 'chronological'
+                # current_mode = mode
+            else:
+                current_mode = mode
+            N_array, periods_array, power_array, best_P_array = single_stack(mode = current_mode, single_tqdm_condition=True)
+            power_mean += np.array(power_array)
+
+        power_mean = power_mean/iterations
+
+        return N_array, periods_array, power_mean, best_P_array
+
+
+    if iterations == None:
+        N_array, periods_array, power_array, best_P_array = single_stack()
+    else:
+        N_array, periods_array, power_array, best_P_array = mean_of_stacks(iterations = iterations)
+
 
     data = np.stack([N_array, periods_array, power_array], axis=0)
 
